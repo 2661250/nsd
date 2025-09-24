@@ -88,6 +88,7 @@ def get_all_sectors_historical_data_yf(etfs, days_back=366):
                 progress=False, auto_adjust=False, back_adjust=False
             )
             if not df.empty:
+                # 1. 清理单个DataFrame
                 df.reset_index(inplace=True)
                 df.rename(columns={
                     'Date': 'date', 'Open': 'o', 'High': 'h',
@@ -96,6 +97,7 @@ def get_all_sectors_historical_data_yf(etfs, days_back=366):
                 df['代码'] = ticker
                 df['板块'] = sector
                 
+                # 2. 只选择我们需要的列，确保结构干净
                 required_cols = ['date', 'h', 'l', 'c', 'v', '代码', '板块']
                 df_clean = df[required_cols]
                 
@@ -106,6 +108,7 @@ def get_all_sectors_historical_data_yf(etfs, days_back=366):
     if not all_clean_dfs:
         return pd.DataFrame()
 
+    # 3. 合并已经100%干净的DataFrames
     full_df = pd.concat(all_clean_dfs, ignore_index=True)
     full_df['date'] = pd.to_datetime(full_df['date']).dt.date
     return full_df
