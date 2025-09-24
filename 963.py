@@ -206,4 +206,22 @@ with st.spinner('正在从 Yahoo Finance 加载历史数据并计算资金流...
                 elif abs(value) >= 1_000_000: return f"${value / 1_000_000:.2f}M"
                 else: return f"${value / 1_000:.2f}K"
 
-            flow_summary_formatted = flow_summary.apply(format_cu
+            flow_summary_formatted = flow_summary.apply(format_currency)
+
+            fig_flow = go.Figure(go.Bar(
+                y=flow_summary.index, x=flow_summary.values,
+                text=flow_summary_formatted, orientation='h',
+                marker_color=['green' if v > 0 else 'red' for v in flow_summary.values]
+            ))
+            fig_flow.update_layout(
+                title=f"过去 {time_period} 天各板块累计净资金流量",
+                xaxis_title="净资金流量 (美元)", yaxis_title="行业板块",
+                showlegend=False, height=500
+            )
+            st.plotly_chart(fig_flow, use_container_width=True)
+            st.info("资金流量是基于每日的 (典型价格 × 成交量) 并根据价格涨跌方向 (+/-) 累计得出的估算值。")
+        else:
+            st.warning("在所选时间范围内无数据可供计算。")
+    else:
+        if selected_sectors:
+            st.error("无法加载历史数据，资金流向分析功能不可用。请稍后重试或检查板块选择。")
