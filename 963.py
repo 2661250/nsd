@@ -1,4 +1,4 @@
-# --- START OF FILE 963.py ---
+# --- START OF FILE 963.py (Final Version with yfinance) ---
 
 import streamlit as st
 import pandas as pd
@@ -6,12 +6,13 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import finnhub
+import yfinance as yf  # [修改点 1] 导入 yfinance 库
 import time
 from datetime import datetime, timedelta
 
 # ------------------ 页面配置 (Page Configuration) ------------------
 st.set_page_config(
-    page_title="美股行业板块表现分析-Finnhub",
+    page_title="美股行业板块表现分析",
     page_icon="💰",
     layout="wide"
 )
@@ -19,22 +20,20 @@ st.set_page_config(
 # ------------------ 应用标题和说明 (App Title & Description) ------------------
 st.title("💰 美股行业板块表现与资金流向分析")
 st.markdown("""
-本应用结合了 **实时行情** 与 **历史资金流向**，为您提供全面的美股行业板块分析。
+本应用结合了 **实时行情 (来自 Finnhub)** 与 **历史资金流向 (来自 Yahoo Finance)**，为您提供全面的免费分析。
 - **实时表现** 反映的是ETF相对于前一交易日收盘价的涨跌。
-- **资金流向分析** 则根据选择的时间周期，估算并对比各板块的累计净资金流入/流出情况。
+- **资金流向分析** 则根据选择的时间周期，估算并对比各板块的累计净资金流入/出情况。
 """)
 
 # ------------------ 配置和常量 (Configuration & Constants) ------------------
 
-# --- API密钥配置 ---
+# --- API密钥配置 (仅用于Finnhub实时数据) ---
 try:
     API_KEY = st.secrets["FINNHUB_API_KEY"]
+    client = finnhub.Client(api_key=API_KEY)
 except KeyError:
-    st.error("错误：找不到 Finnhub API 密钥。")
-    st.info("请在 Streamlit Community Cloud 的 'Settings > Secrets' 中添加密钥。")
-    st.stop()
-
-client = finnhub.Client(api_key=API_KEY)
+    st.error("错误：找不到 Finnhub API 密钥。实时数据功能将受限。")
+    client = None # 如果没有密钥，则将client设为None
 
 # 板块ETF映射
 SECTOR_ETFS = {
@@ -55,7 +54,10 @@ SECTOR_ETFS = {
 
 @st.cache_data(ttl=60)
 def get_realtime_performance_data(etfs):
-    """获取所有选定ETF的实时表现数据。"""
+    """(使用 Finnhub) 获取所有选定ETF的实时表现数据。"""
+    if client is None: # 如果没有API Key则跳过
+        return pd.DataFrame()
+        
     performance_data = []
     for sector, ticker in etfs.items():
         try:
@@ -66,37 +68,53 @@ def get_realtime_performance_data(etfs):
                     "涨跌额": quote.get('d', 0), "涨跌幅 (%)": quote.get('dp', 0),
                     "昨日收盘": quote.get('pc', 0)
                 })
-        except Exception as e:
-            st.warning(f"获取板块 '{sector}' ({ticker}) 实时数据时出错: {e}")
+        except Exception:
+            pass
     if not performance_data: return pd.DataFrame()
     return pd.DataFrame(performance_data)
 
+# [修改点 2] 重写获取历史数据的函数，改用 yfinance
 @st.cache_data(ttl=3600) # 历史数据缓存1小时
-def get_all_sectors_historical_data(etfs, days_back=366):
-    """一次性获取所有板块ETF过去一年的历史日线数据(OHLCV)。"""
-    all_data = []
-    end_timestamp = int(datetime.now().timestamp())
-    start_timestamp = int((datetime.now() - timedelta(days=days_back)).timestamp())
+def get_all_sectors_historical_data_yf(etfs, days_back=366):
+    """
+    (使用 yfinance) 一次性获取所有板块ETF过去一年的历史日线数据。
+    """
+    ticker_list = list(etfs.values())
+    sector_map = {v: k for k, v in etfs.items()} # 创建一个从代码到板块名称的反向映射
 
-    for sector, ticker in etfs.items():
-        try:
-            res = client.stock_candles(ticker, 'D', start_timestamp, end_timestamp)
-            if res['s'] == 'ok' and len(res['t']) > 0:
-                df = pd.DataFrame(res)
-                df['板块'] = sector
-                df['代码'] = ticker
-                all_data.append(df)
-        except Exception as e:
-            st.warning(f"获取板块 '{sector}' ({ticker}) 历史数据时出错: {e}")
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days_back)
     
-    if not all_data: return pd.DataFrame()
-    
-    full_df = pd.concat(all_data, ignore_index=True)
-    full_df['date'] = pd.to_datetime(full_df['t'], unit='s').dt.date
-    return full_df
+    try:
+        # yfinance 可以一次性下载多个股票的数据，非常高效
+        data = yf.download(ticker_list, start=start_date, end=end_date)
+        
+        # yfinance 返回的数据是多重索引的，需要整理
+        df_ohlcv = data.stack().reset_index()
+        df_ohlcv.rename(columns={
+            'level_1': '代码', 
+            'Date': 'date',
+            'Open': 'o',
+            'High': 'h',
+            'Low': 'l',
+            'Close': 'c',
+            'Adj Close': 'adj_c',
+            'Volume': 'v'
+        }, inplace=True)
+        
+        # 加上板块名称
+        df_ohlcv['板块'] = df_ohlcv['代码'].map(sector_map)
+        df_ohlcv['date'] = pd.to_datetime(df_ohlcv['date']).dt.date
+        return df_ohlcv
+
+    except Exception as e:
+        st.error(f"使用 yfinance 获取历史数据时出错: {e}")
+        return pd.DataFrame()
 
 def calculate_money_flow(df):
     """计算每日资金流量的代理指标。"""
+    if df.empty or 'h' not in df.columns:
+        return pd.DataFrame()
     df['typical_price'] = (df['h'] + df['l'] + df['c']) / 3
     df['price_change'] = df.groupby('代码')['typical_price'].diff()
     df['flow_direction'] = np.sign(df['price_change'])
@@ -119,55 +137,53 @@ with st.sidebar:
 
 # ------------------ 数据获取与处理 ------------------
 etfs_to_fetch = {sector: SECTOR_ETFS[sector] for sector in selected_sectors}
-
-with st.spinner('正在从 Finnhub 加载实时数据...'):
-    df_performance = get_realtime_performance_data(etfs_to_fetch)
+df_performance = get_realtime_performance_data(etfs_to_fetch)
 
 # ------------------ 页面展示 ------------------
 
+# --- Section 1: 实时表现概览 ---
 if df_performance.empty:
-    st.warning("未能获取任何板块的实时数据。请检查API Key权限或网络连接。")
+    st.info("未能加载实时数据。可能是未配置Finnhub API密钥。资金流向分析仍可使用。")
 else:
-    df_sorted = df_performance.sort_values(by="涨跌幅 (%)", ascending=False).reset_index(drop=True)
-
-    # --- Section 1: 实时表现概览 ---
     st.subheader(f"📊 截至 {pd.Timestamp.now(tz='Asia/Shanghai').strftime('%Y-%m-%d %H:%M:%S')} 的实时表现")
     col1, col2 = st.columns([1, 2])
     with col1:
-        top_performer = df_sorted.iloc[0]
+        top_performer = df_performance.sort_values(by="涨跌幅 (%)", ascending=False).iloc[0]
         st.metric(label=f"🟢 领涨: {top_performer['板块']}", value=f"{top_performer['涨跌幅 (%)']:.2f}%", delta=f"{top_performer['涨跌额']:.2f}")
-        bottom_performer = df_sorted.iloc[-1]
+        bottom_performer = df_performance.sort_values(by="涨跌幅 (%)", ascending=False).iloc[-1]
         st.metric(label=f"🔴 领跌: {bottom_performer['板块']}", value=f"{bottom_performer['涨跌幅 (%)']:.2f}%", delta=f"{bottom_performer['涨跌额']:.2f}")
     with col2:
         fig_bar = px.bar(
-            df_sorted, x="涨跌幅 (%)", y="板块", orientation='h', text="涨跌幅 (%)",
-            color=df_sorted["涨跌幅 (%)"] > 0, color_discrete_map={True: "green", False: "red"},
+            df_performance.sort_values(by="涨跌幅 (%)", ascending=False),
+            x="涨跌幅 (%)", y="板块", orientation='h', text="涨跌幅 (%)",
+            color=df_performance["涨跌幅 (%)"] > 0, color_discrete_map={True: "green", False: "red"},
             title="各板块实时涨跌幅对比"
         )
         fig_bar.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
         fig_bar.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_bar, use_container_width=True)
+
+st.divider()
+
+# --- Section 2: 板块资金流向横向对比 ---
+st.subheader("🌊 板块资金流向对比 (数据源: Yahoo Finance)")
+
+time_period = st.radio(
+    "选择时间周期",
+    options=[7, 30, 90, 180, 360],
+    format_func=lambda x: f"{x} 天",
+    horizontal=True,
+)
+
+with st.spinner('正在从 Yahoo Finance 加载历史数据并计算资金流...'):
+    df_history_raw = get_all_sectors_historical_data_yf(etfs_to_fetch)
     
-    # [修正] st.d 的错误在这里
-    st.divider()
-
-    # --- Section 2: 板块资金流向横向对比 ---
-    st.subheader("🌊 板块资金流向对比")
-
-    time_period = st.radio(
-        "选择时间周期",
-        options=[7, 30, 90, 180, 360],
-        format_func=lambda x: f"{x} 天",
-        horizontal=True,
-    )
-
-    with st.spinner('正在加载并计算所有板块的历史资金流...'):
-        df_history_raw = get_all_sectors_historical_data(etfs_to_fetch)
+    if not df_history_raw.empty:
+        df_history_flow = calculate_money_flow(df_history_raw)
+        start_date = pd.to_datetime(datetime.now().date() - timedelta(days=time_period))
+        df_filtered = df_history_flow[pd.to_datetime(df_history_flow['date']) >= start_date]
         
-        if not df_history_raw.empty:
-            df_history_flow = calculate_money_flow(df_history_raw)
-            start_date = pd.to_datetime(datetime.now().date() - timedelta(days=time_period))
-            df_filtered = df_history_flow[pd.to_datetime(df_history_flow['date']) >= start_date]
+        if not df_filtered.empty:
             flow_summary = df_filtered.groupby('板块')['money_flow_volume'].sum().sort_values()
             
             def format_currency(value):
@@ -200,4 +216,6 @@ else:
             - **计算方法**: 资金流量是基于每日的 **(典型价格 × 成交量)** 并根据价格涨跌方向 (+/-) 累计得出的估算值。
             """)
         else:
-            st.warning("未能加载历史数据，无法计算资金流向。")
+            st.warning("在所选时间范围内无数据可供计算。")
+    else:
+        st.error("无法加载历史数据，资金流向分析功能不可用。")
