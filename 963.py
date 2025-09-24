@@ -1,4 +1,4 @@
-# --- START OF FILE 963.py (Final Corrected Version) ---
+# --- START OF FILE 963.py (Final Corrected Version 2) ---
 
 import streamlit as st
 import pandas as pd
@@ -9,6 +9,7 @@ import finnhub
 import yfinance as yf
 import time
 from datetime import datetime, timedelta
+import traceback
 
 # ------------------ 页面配置 (Page Configuration) ------------------
 st.set_page_config(
@@ -32,7 +33,7 @@ try:
     API_KEY = st.secrets["FINNHUB_API_KEY"]
     client = finnhub.Client(api_key=API_KEY)
 except KeyError:
-    client = None # 如果没有密钥，则将client设为None
+    client = None
 
 # 板块ETF映射
 SECTOR_ETFS = {
@@ -53,10 +54,7 @@ SECTOR_ETFS = {
 
 @st.cache_data(ttl=60)
 def get_realtime_performance_data(etfs):
-    """(使用 Finnhub) 获取所有选定ETF的实时表现数据。"""
-    if client is None:
-        return pd.DataFrame()
-        
+    if client is None: return pd.DataFrame()
     performance_data = []
     for sector, ticker in etfs.items():
         try:
@@ -73,7 +71,10 @@ def get_realtime_performance_data(etfs):
 
 @st.cache_data(ttl=3600)
 def get_all_sectors_historical_data_yf(etfs, days_back=366):
-    """(使用 yfinance) 获取历史数据，并处理单/多ticker返回不同结构的问题。"""
+    """
+    [最终修正版] 使用 yfinance 获取历史数据。
+    通过 `group_by='ticker'` 参数统一单/多ticker的返回数据结构，确保稳健性。
+    """
     if not etfs:
         return pd.DataFrame()
         
@@ -83,36 +84,37 @@ def get_all_sectors_historical_data_yf(etfs, days_back=366):
     start_date = end_date - timedelta(days=days_back)
     
     try:
-        data = yf.download(ticker_list, start=start_date, end=end_date, progress=False)
-        if data.empty:
-            return pd.DataFrame()
+        data = yf.download(
+            ticker_list,
+            start=start_date,
+            end=end_date,
+            progress=False,
+            group_by='ticker',  # [核心修正] 强制返回多层索引，统一数据结构
+            auto_adjust=False,  # 显式设置以避免警告
+            back_adjust=False
+        )
+        if data.empty: return pd.DataFrame()
 
-        # [修正点] 核心修正逻辑，处理单/多ticker返回不同数据结构的问题
-        if len(ticker_list) == 1:
-            # 如果只下载一个ticker，手动添加“代码”列
-            data['代码'] = ticker_list[0]
-            df_ohlcv = data.reset_index()
-        else:
-            # 如果下载多个ticker，使用stack处理多层索引
-            df_ohlcv = data.stack().reset_index()
+        # [核心修正] 现在这个stack操作对单/多ticker都同样有效
+        df_stacked = data.stack(future_stack=True)
+        df_ohlcv = df_stacked.reset_index()
         
         df_ohlcv.rename(columns={
             'level_1': '代码', 'Date': 'date', 'Open': 'o', 'High': 'h',
             'Low': 'l', 'Close': 'c', 'Adj Close': 'adj_c', 'Volume': 'v'
-        }, inplace=True, errors='ignore') # errors='ignore' 增加稳健性
+        }, inplace=True)
         
         df_ohlcv['板块'] = df_ohlcv['代码'].map(sector_map)
         df_ohlcv['date'] = pd.to_datetime(df_ohlcv['date']).dt.date
         return df_ohlcv
     except Exception as e:
+        # 增加更详细的错误输出，方便未来调试
         st.error(f"使用 yfinance 获取历史数据时出错: {e}")
+        st.code(traceback.format_exc()) # 打印完整的错误堆栈
         return pd.DataFrame()
 
 def calculate_money_flow(df):
-    """计算每日资金流量的代理指标。"""
-    if df.empty or 'h' not in df.columns:
-        return pd.DataFrame()
-    # 确保数据按代码和日期排序，这对于 .diff() 的准确性至关重要
+    if df.empty or 'h' not in df.columns: return pd.DataFrame()
     df = df.sort_values(by=['代码', 'date'])
     df['typical_price'] = (df['h'] + df['l'] + df['c']) / 3
     df['price_change'] = df.groupby('代码')['typical_price'].diff()
@@ -141,7 +143,6 @@ df_performance = get_realtime_performance_data(etfs_to_fetch)
 # ------------------ 页面展示 ------------------
 
 # --- Section 1: 实时表现概览 ---
-# [修正点] 增加更强的保护，确保即使df_performance只有一个有效行也能正常显示
 if df_performance.empty:
     st.info("未能加载实时数据。可能是未配置Finnhub API密钥。资金流向分析仍可使用。")
 else:
@@ -155,7 +156,7 @@ else:
                 bottom_performer = df_sorted_perf.iloc[-1]
                 st.metric(label=f"🟢 领涨: {top_performer['板块']}", value=f"{top_performer['涨跌幅 (%)']:.2f}%", delta=f"{top_performer['涨跌额']:.2f}")
                 st.metric(label=f"🔴 领跌: {bottom_performer['板块']}", value=f"{bottom_performer['涨跌幅 (%)']:.2f}%", delta=f"{bottom_performer['涨跌额']:.2f}")
-        except (IndexError, KeyError) as e:
+        except (IndexError, KeyError):
             st.warning("实时数据不足，无法显示领涨/领跌板块。")
 
     with col2:
@@ -215,4 +216,6 @@ with st.spinner('正在从 Yahoo Finance 加载历史数据并计算资金流...
         else:
             st.warning("在所选时间范围内无数据可供计算。")
     else:
-        st.error("无法加载历史数据，资金流向分析功能不可用。")
+        # 只有在侧边栏选择了板块但仍然没获取到数据时，才显示这个错误
+        if selected_sectors:
+            st.error("无法加载历史数据，资金流向分析功能不可用。请稍后重试或检查板块选择。")
