@@ -1,3 +1,5 @@
+# --- START OF FILE 963.py ---
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -22,11 +24,23 @@ st.markdown("""
 
 # ------------------ 配置和常量 (Configuration & Constants) ------------------
 
-# --- API密钥配置 ---
-# 警告：直接在代码中写入API密钥是不安全的做法。
-# 这种方法仅用于快速测试，不建议在生产环境或共享代码时使用。
-API_KEY = "d39qaspr01qoho9gvkegd39qaspr01qoho9gvkf0"
+# --- API密钥配置 (API Key Configuration) ---
+# [修改点 1] 使用 Streamlit 的 Secrets 管理功能，这是部署时安全读取密钥的最佳方式。
+try:
+    # 尝试从 Streamlit Cloud 的 secrets 中读取密钥
+    API_KEY = st.secrets["FINNHUB_API_KEY"]
+except KeyError:
+    # 如果找不到密钥，则显示错误信息并停止应用
+    st.error("错误：找不到 Finnhub API 密钥。")
+    st.info("""
+        请在 Streamlit Community Cloud 的 'Settings > Secrets' 中添加密钥：\n
+        ```toml
+        FINNHUB_API_KEY = "你的真实API密钥"
+        ```
+    """)
+    st.stop() # 停止应用运行
 
+# 使用获取到的密钥初始化 Finnhub 客户端
 client = finnhub.Client(api_key=API_KEY)
 
 # 板块ETF映射
@@ -50,18 +64,11 @@ SECTOR_ETFS = {
 def get_realtime_performance_data(etfs):
     """
     使用 Finnhub 的 quote API 获取所有选定ETF的实时表现数据。
-
-    Args:
-        etfs (dict): 板块名称到ETF代码的映射。
-
-    Returns:
-        pd.DataFrame: 包含各板块实时表现的DataFrame。
     """
     performance_data = []
     for sector, ticker in etfs.items():
         try:
             quote = client.quote(ticker)
-            # 检查API返回的数据是否有效
             if quote.get('c') is not None and quote.get('c') != 0:
                 performance_data.append({
                     "板块": sector,
@@ -74,7 +81,6 @@ def get_realtime_performance_data(etfs):
             else:
                  st.warning(f"板块 '{sector}' ({ticker}) 返回了无效数据，已跳过。")
         except Exception as e:
-            # 捕获权限错误
             if "You don't have access to this resource" in str(e):
                  st.error(f"API密钥权限不足，无法获取 '{sector}' ({ticker}) 的数据。请检查您的Finnhub订阅计划。")
             else:
@@ -88,24 +94,21 @@ def get_realtime_performance_data(etfs):
 # ------------------ 侧边栏和用户输入 (Sidebar & User Inputs) ------------------
 
 with st.sidebar:
-    st.header("⚙️ 參數設置")
+    st.header("⚙️ 参数设置")
     
-    # 板块选择
     all_sectors = list(SECTOR_ETFS.keys())
-    selected_sectors = st.multiselect( # <--- 这里已经修正
+    selected_sectors = st.multiselect(
         "选择要监控的板块",
         options=all_sectors,
         default=all_sectors
     )
     
-    # 自动刷新开关
     if st.checkbox("自动刷新（每分钟）"):
         time.sleep(60)
         st.rerun()
 
-    # 手动刷新按钮
     if st.button("🔄 手动刷新"):
-        st.cache_data.clear() # 清除缓存以获取最新数据
+        st.cache_data.clear()
         st.rerun()
 
 # ------------------ 数据获取与处理 (Data Fetching & Processing) ------------------
@@ -124,43 +127,48 @@ else:
 
     st.subheader(f"📊 截至 {pd.Timestamp.now(tz='Asia/Shanghai').strftime('%Y-%m-%d %H:%M:%S')} 的实时表现")
     
-    col1, col2 = st.columns(2)
+    # [修改点 2] 移除 st.columns(2) 双栏布局，改为单栏垂直布局，以优化移动端体验。
+    # 指标和图表将从上到下依次显示。
     
-    with col1:
-        top_performer = df_sorted.iloc[0]
-        st.metric(
-            label=f"🟢 领涨板块: {top_performer['板块']}",
-            value=f"{top_performer['涨跌幅 (%)']:.2f}%",
-            delta=f"{top_performer['涨跌额']:.2f}"
-        )
-        
-        bottom_performer = df_sorted.iloc[-1]
-        st.metric(
-            label=f"🔴 领跌板块: {bottom_performer['板块']}",
-            value=f"{bottom_performer['涨跌额']:.2f}"
-        )
-
-    with col2:
-        fig_bar = px.bar(
-            df_sorted,
-            x="涨跌幅 (%)",
-            y="板块",
-            orientation='h',
-            text="涨跌幅 (%)",
-            color=df_sorted["涨跌幅 (%)"] > 0,
-            color_discrete_map={True: "green", False: "red"},
-            labels={"板块": "行业板块", "涨跌幅 (%)": "实时涨跌幅 (%)"}
-        )
-        fig_bar.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
-        fig_bar.update_layout(
-            showlegend=False, 
-            yaxis={'categoryorder':'total ascending'},
-            title="各板块实时涨跌幅对比"
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
+    # 显示领涨和领跌板块指标
+    top_performer = df_sorted.iloc[0]
+    st.metric(
+        label=f"🟢 领涨板块: {top_performer['板块']}",
+        value=f"{top_performer['涨跌幅 (%)']:.2f}%",
+        delta=f"{top_performer['涨跌额']:.2f}"
+    )
+    
+    bottom_performer = df_sorted.iloc[-1]
+    st.metric(
+        label=f"🔴 领跌板块: {bottom_performer['板块']}",
+        value=f"{bottom_performer['涨跌幅 (%)']:.2f}%",
+        delta=f"{bottom_performer['涨跌额']:.2f}"
+    )
     
     st.divider()
 
+    # 显示条形图
+    st.subheader("各板块实时涨跌幅对比")
+    fig_bar = px.bar(
+        df_sorted,
+        x="涨跌幅 (%)",
+        y="板块",
+        orientation='h',
+        text="涨跌幅 (%)",
+        color=df_sorted["涨跌幅 (%)"] > 0,
+        color_discrete_map={True: "green", False: "red"},
+        labels={"板块": "行业板块", "涨跌幅 (%)": "实时涨跌幅 (%)"}
+    )
+    fig_bar.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
+    fig_bar.update_layout(
+        showlegend=False, 
+        yaxis={'categoryorder':'total ascending'}
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
+    
+    st.divider()
+
+    # 显示详细数据表
     st.subheader("📋 详细数据表")
     
     def style_change(val):
