@@ -56,7 +56,6 @@ SECTOR_ETFS = {
 @st.cache_data(ttl=60)
 def get_realtime_performance_data(etfs):
     """获取所有选定ETF的实时表现数据。"""
-    # (此函数与之前版本相同，保持不变)
     performance_data = []
     for sector, ticker in etfs.items():
         try:
@@ -74,9 +73,7 @@ def get_realtime_performance_data(etfs):
 
 @st.cache_data(ttl=3600) # 历史数据缓存1小时
 def get_all_sectors_historical_data(etfs, days_back=366):
-    """
-    一次性获取所有板块ETF过去一年的历史日线数据(OHLCV)。
-    """
+    """一次性获取所有板块ETF过去一年的历史日线数据(OHLCV)。"""
     all_data = []
     end_timestamp = int(datetime.now().timestamp())
     start_timestamp = int((datetime.now() - timedelta(days=days_back)).timestamp())
@@ -94,29 +91,16 @@ def get_all_sectors_historical_data(etfs, days_back=366):
     
     if not all_data: return pd.DataFrame()
     
-    # 合并所有数据到一个DataFrame
     full_df = pd.concat(all_data, ignore_index=True)
     full_df['date'] = pd.to_datetime(full_df['t'], unit='s').dt.date
     return full_df
 
 def calculate_money_flow(df):
-    """
-    计算每日资金流量的代理指标。
-    算法: (典型价格 * 成交量) * (价格变动方向)
-    """
-    # 计算典型价格 (Typical Price)
+    """计算每日资金流量的代理指标。"""
     df['typical_price'] = (df['h'] + df['l'] + df['c']) / 3
-    
-    # 计算每日价格变动
-    # 使用 groupby('代码')确保每个ETF的价格变动是独立计算的
     df['price_change'] = df.groupby('代码')['typical_price'].diff()
-    
-    # 确定资金流向 (+1 for inflow, -1 for outflow)
     df['flow_direction'] = np.sign(df['price_change'])
-    
-    # 计算每日资金流量 (Money Flow Volume)
     df['money_flow_volume'] = df['flow_direction'] * df['typical_price'] * df['v']
-    
     return df
 
 # ------------------ 侧边栏和用户输入 ------------------
@@ -146,7 +130,7 @@ if df_performance.empty:
 else:
     df_sorted = df_performance.sort_values(by="涨跌幅 (%)", ascending=False).reset_index(drop=True)
 
-    # --- Section 1: 实时表现概览 (与之前版本相同) ---
+    # --- Section 1: 实时表现概览 ---
     st.subheader(f"📊 截至 {pd.Timestamp.now(tz='Asia/Shanghai').strftime('%Y-%m-%d %H:%M:%S')} 的实时表现")
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -164,12 +148,12 @@ else:
         fig_bar.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_bar, use_container_width=True)
     
+    # [修正] st.d 的错误在这里
     st.divider()
 
-    # --- Section 2: 板块资金流向横向对比 (新功能) ---
+    # --- Section 2: 板块资金流向横向对比 ---
     st.subheader("🌊 板块资金流向对比")
 
-    # 时间周期选择器
     time_period = st.radio(
         "选择时间周期",
         options=[7, 30, 90, 180, 360],
@@ -178,40 +162,28 @@ else:
     )
 
     with st.spinner('正在加载并计算所有板块的历史资金流...'):
-        # 获取所有历史数据并计算资金流
         df_history_raw = get_all_sectors_historical_data(etfs_to_fetch)
         
         if not df_history_raw.empty:
             df_history_flow = calculate_money_flow(df_history_raw)
-
-            # 根据选择的时间周期筛选数据
             start_date = pd.to_datetime(datetime.now().date() - timedelta(days=time_period))
             df_filtered = df_history_flow[pd.to_datetime(df_history_flow['date']) >= start_date]
-
-            # 按板块分组并汇总资金流量
             flow_summary = df_filtered.groupby('板块')['money_flow_volume'].sum().sort_values()
             
-            # 数据格式化，方便阅读 (转换为百万/十亿)
             def format_currency(value):
-                if abs(value) >= 1_000_000_000:
-                    return f"${value / 1_000_000_000:.2f}B" # 十亿
-                elif abs(value) >= 1_000_000:
-                    return f"${value / 1_000_000:.2f}M" # 百万
-                else:
-                    return f"${value / 1_000:.2f}K" # 千
+                if abs(value) >= 1_000_000_000: return f"${value / 1_000_000_000:.2f}B"
+                elif abs(value) >= 1_000_000: return f"${value / 1_000_000:.2f}M"
+                else: return f"${value / 1_000:.2f}K"
 
             flow_summary_formatted = flow_summary.apply(format_currency)
 
-            # 创建图表
-            fig_flow = go.Figure()
-            fig_flow.add_trace(go.Bar(
+            fig_flow = go.Figure(go.Bar(
                 y=flow_summary.index,
                 x=flow_summary.values,
                 text=flow_summary_formatted,
                 orientation='h',
                 marker_color=['green' if v > 0 else 'red' for v in flow_summary.values]
             ))
-
             fig_flow.update_layout(
                 title=f"过去 {time_period} 天各板块累计净资金流量",
                 xaxis_title="净资金流量 (美元)",
@@ -223,9 +195,8 @@ else:
 
             st.info("""
             **如何解读图表?**
-            - **绿色条**: 表示在该时间周期内，该板块的 **净资金流入** 为正。通常意味着市场对该板块看好，买方力量更强。
-            - **红色条**: 表示在该时间周期内，该板块的 **净资金流出** 为负。通常意味着市场对该板块看淡，卖方力量更强。
-            - **条的长度**: 代表了资金流动的绝对规模。
+            - **绿色条**: 表示在该时间周期内，该板块的 **净资金流入** 为正。
+            - **红色条**: 表示在该时间周期内，该板块的 **净资金流出** 为负。
             - **计算方法**: 资金流量是基于每日的 **(典型价格 × 成交量)** 并根据价格涨跌方向 (+/-) 累计得出的估算值。
             """)
         else:
