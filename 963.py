@@ -1,4 +1,4 @@
-# --- START OF FILE 963.py (Final Corrected Version 2) ---
+# --- START OF FILE 963.py (Final Robust Version) ---
 
 import streamlit as st
 import pandas as pd
@@ -69,49 +69,49 @@ def get_realtime_performance_data(etfs):
             pass
     return pd.DataFrame(performance_data)
 
+# [核心修正] 采用最稳健的循环下载方式
 @st.cache_data(ttl=3600)
 def get_all_sectors_historical_data_yf(etfs, days_back=366):
     """
-    [最终修正版] 使用 yfinance 获取历史数据。
-    通过 `group_by='ticker'` 参数统一单/多ticker的返回数据结构，确保稳健性。
+    [最终修正版] 使用 yfinance 逐个下载数据，确保数据结构的一致性和稳健性。
     """
     if not etfs:
         return pd.DataFrame()
         
-    ticker_list = list(etfs.values())
-    sector_map = {v: k for k, v in etfs.items()}
+    all_dfs = []
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days_back)
     
-    try:
-        data = yf.download(
-            ticker_list,
-            start=start_date,
-            end=end_date,
-            progress=False,
-            group_by='ticker',  # [核心修正] 强制返回多层索引，统一数据结构
-            auto_adjust=False,  # 显式设置以避免警告
-            back_adjust=False
-        )
-        if data.empty: return pd.DataFrame()
-
-        # [核心修正] 现在这个stack操作对单/多ticker都同样有效
-        df_stacked = data.stack(future_stack=True)
-        df_ohlcv = df_stacked.reset_index()
-        
-        df_ohlcv.rename(columns={
-            'level_1': '代码', 'Date': 'date', 'Open': 'o', 'High': 'h',
-            'Low': 'l', 'Close': 'c', 'Adj Close': 'adj_c', 'Volume': 'v'
-        }, inplace=True)
-        
-        df_ohlcv['板块'] = df_ohlcv['代码'].map(sector_map)
-        df_ohlcv['date'] = pd.to_datetime(df_ohlcv['date']).dt.date
-        return df_ohlcv
-    except Exception as e:
-        # 增加更详细的错误输出，方便未来调试
-        st.error(f"使用 yfinance 获取历史数据时出错: {e}")
-        st.code(traceback.format_exc()) # 打印完整的错误堆栈
+    for sector, ticker in etfs.items():
+        try:
+            # 每次只下载一个ticker，保证返回DataFrame结构简单一致
+            df = yf.download(
+                ticker,
+                start=start_date,
+                end=end_date,
+                progress=False,
+                auto_adjust=False # 保持OHLC列
+            )
+            if not df.empty:
+                df['代码'] = ticker
+                df['板块'] = sector
+                all_dfs.append(df)
+        except Exception:
+            # 如果单个ticker下载失败，则跳过，不影响其他ticker
+            pass
+            
+    if not all_dfs:
         return pd.DataFrame()
+
+    # 将所有下载的DataFrame合并成一个
+    full_df = pd.concat(all_dfs)
+    full_df.reset_index(inplace=True)
+    full_df.rename(columns={
+        'Date': 'date', 'Open': 'o', 'High': 'h',
+        'Low': 'l', 'Close': 'c', 'Volume': 'v'
+    }, inplace=True)
+    full_df['date'] = pd.to_datetime(full_df['date']).dt.date
+    return full_df
 
 def calculate_money_flow(df):
     if df.empty or 'h' not in df.columns: return pd.DataFrame()
@@ -216,6 +216,5 @@ with st.spinner('正在从 Yahoo Finance 加载历史数据并计算资金流...
         else:
             st.warning("在所选时间范围内无数据可供计算。")
     else:
-        # 只有在侧边栏选择了板块但仍然没获取到数据时，才显示这个错误
         if selected_sectors:
             st.error("无法加载历史数据，资金流向分析功能不可用。请稍后重试或检查板块选择。")
