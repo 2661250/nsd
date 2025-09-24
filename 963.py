@@ -1,4 +1,4 @@
-# --- START OF FILE 963.py (Final Robust Version 3) ---
+# --- START OF FILE 963.py (Final Robust Version 4) ---
 
 import streamlit as st
 import pandas as pd
@@ -9,7 +9,6 @@ import finnhub
 import yfinance as yf
 import time
 from datetime import datetime, timedelta
-import traceback
 
 # ------------------ 页面配置 (Page Configuration) ------------------
 st.set_page_config(
@@ -88,8 +87,8 @@ def get_all_sectors_historical_data_yf(etfs, days_back=366):
                 progress=False, auto_adjust=False, back_adjust=False
             )
             if not df.empty:
-                # 1. 清理单个DataFrame
                 df.reset_index(inplace=True)
+                # [核心修正] 统一使用小写英文列名
                 df.rename(columns={
                     'Date': 'date', 'Open': 'o', 'High': 'h',
                     'Low': 'l', 'Close': 'c', 'Volume': 'v'
@@ -97,7 +96,6 @@ def get_all_sectors_historical_data_yf(etfs, days_back=366):
                 df['代码'] = ticker
                 df['板块'] = sector
                 
-                # 2. 只选择我们需要的列，确保结构干净
                 required_cols = ['date', 'h', 'l', 'c', 'v', '代码', '板块']
                 df_clean = df[required_cols]
                 
@@ -108,17 +106,16 @@ def get_all_sectors_historical_data_yf(etfs, days_back=366):
     if not all_clean_dfs:
         return pd.DataFrame()
 
-    # 3. 合并已经100%干净的DataFrames
     full_df = pd.concat(all_clean_dfs, ignore_index=True)
     full_df['date'] = pd.to_datetime(full_df['date']).dt.date
     return full_df
 
-# [核心修正] 确保使用统一的英文列名进行计算
+# [核心修正] 确保使用统一的小写英文列名进行计算
 def calculate_money_flow(df):
     if df.empty or 'h' not in df.columns: return pd.DataFrame()
     df_copy = df.copy()
     df_copy = df_copy.sort_values(by=['代码', 'date'])
-    # 使用统一的英文列名：h, l, c, v
+    # 使用统一的小写英文列名：h, l, c, v
     df_copy['typical_price'] = (df_copy['h'] + df_copy['l'] + df_copy['c']) / 3
     df_copy['price_change'] = df_copy.groupby('代码')['typical_price'].diff()
     df_copy['flow_direction'] = np.sign(df_copy['price_change'])
