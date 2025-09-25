@@ -1,4 +1,4 @@
-# --- START OF FILE 963.py (Final Robust Version 4) ---
+# --- START OF FILE 963.py (Final Visual Fix Version) ---
 
 import streamlit as st
 import pandas as pd
@@ -70,16 +70,10 @@ def get_realtime_performance_data(etfs):
 
 @st.cache_data(ttl=3600)
 def get_all_sectors_historical_data_yf(etfs, days_back=366):
-    """
-    [最终修正版] 使用 yfinance 逐个下载数据，并在循环内完成数据清理，确保最终结构正确。
-    """
-    if not etfs:
-        return pd.DataFrame()
-        
+    if not etfs: return pd.DataFrame()
     all_clean_dfs = []
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days_back)
-    
     for sector, ticker in etfs.items():
         try:
             df = yf.download(
@@ -88,34 +82,26 @@ def get_all_sectors_historical_data_yf(etfs, days_back=366):
             )
             if not df.empty:
                 df.reset_index(inplace=True)
-                # [核心修正] 统一使用小写英文列名
                 df.rename(columns={
                     'Date': 'date', 'Open': 'o', 'High': 'h',
                     'Low': 'l', 'Close': 'c', 'Volume': 'v'
                 }, inplace=True)
                 df['代码'] = ticker
                 df['板块'] = sector
-                
                 required_cols = ['date', 'h', 'l', 'c', 'v', '代码', '板块']
                 df_clean = df[required_cols]
-                
                 all_clean_dfs.append(df_clean)
         except Exception:
             pass
-            
-    if not all_clean_dfs:
-        return pd.DataFrame()
-
+    if not all_clean_dfs: return pd.DataFrame()
     full_df = pd.concat(all_clean_dfs, ignore_index=True)
     full_df['date'] = pd.to_datetime(full_df['date']).dt.date
     return full_df
 
-# [核心修正] 确保使用统一的小写英文列名进行计算
 def calculate_money_flow(df):
     if df.empty or 'h' not in df.columns: return pd.DataFrame()
     df_copy = df.copy()
     df_copy = df_copy.sort_values(by=['代码', 'date'])
-    # 使用统一的小写英文列名：h, l, c, v
     df_copy['typical_price'] = (df_copy['h'] + df_copy['l'] + df_copy['c']) / 3
     df_copy['price_change'] = df_copy.groupby('代码')['typical_price'].diff()
     df_copy['flow_direction'] = np.sign(df_copy['price_change'])
@@ -137,7 +123,7 @@ with st.sidebar:
         st.rerun()
 
 # ------------------ 数据获取与处理 ------------------
-etfs_to_fetch = {sector: SECTOR_ETFS[sector] for sector in selected_sectors}
+etfs_to_fetch = {sector: SECTOR_ETFS[sector] for sector in selected_sectors if sector in SECTOR_ETFS}
 df_performance = get_realtime_performance_data(etfs_to_fetch)
 
 # ------------------ 页面展示 ------------------
@@ -160,10 +146,14 @@ else:
             st.warning("实时数据不足，无法显示领涨/领跌板块。")
 
     with col2:
+        # [核心修正] 先排序，再将排好序的DataFrame用于绘图和颜色计算
+        df_sorted_for_chart = df_performance.sort_values(by="涨跌幅 (%)")
+        
         fig_bar = px.bar(
-            df_performance.sort_values(by="涨跌幅 (%)"),
+            df_sorted_for_chart,  # 使用排好序的数据
             x="涨跌幅 (%)", y="板块", orientation='h', text="涨跌幅 (%)",
-            color=df_performance["涨跌幅 (%)"] > 0, color_discrete_map={True: "green", False: "red"},
+            color=df_sorted_for_chart["涨跌幅 (%)"] > 0,  # 使用同一份排好序的数据来决定颜色
+            color_discrete_map={True: "green", False: "red"},
             title="各板块实时涨跌幅对比"
         )
         fig_bar.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
@@ -197,24 +187,4 @@ with st.spinner('正在从 Yahoo Finance 加载历史数据并计算资金流...
                 if pd.isna(value): return "$0.00K"
                 if abs(value) >= 1_000_000_000: return f"${value / 1_000_000_000:.2f}B"
                 elif abs(value) >= 1_000_000: return f"${value / 1_000_000:.2f}M"
-                else: return f"${value / 1_000:.2f}K"
-
-            flow_summary_formatted = flow_summary.apply(format_currency)
-
-            fig_flow = go.Figure(go.Bar(
-                y=flow_summary.index, x=flow_summary.values,
-                text=flow_summary_formatted, orientation='h',
-                marker_color=['green' if v > 0 else 'red' for v in flow_summary.values]
-            ))
-            fig_flow.update_layout(
-                title=f"过去 {time_period} 天各板块累计净资金流量",
-                xaxis_title="净资金流量 (美元)", yaxis_title="行业板块",
-                showlegend=False, height=500
-            )
-            st.plotly_chart(fig_flow, use_container_width=True)
-            st.info("资金流量是基于每日的 (典型价格 × 成交量) 并根据价格涨跌方向 (+/-) 累计得出的估算值。")
-        else:
-            st.warning("在所选时间范围内无数据可供计算。")
-    else:
-        if selected_sectors:
-            st.error("无法加载历史数据，资金流向分析功能不可用。请稍后重试或检查板块选择。")
+                else: retu
