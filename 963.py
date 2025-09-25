@@ -1,4 +1,4 @@
-# --- START OF FILE 963.py (Final Simplified & Enhanced Version) ---
+# --- START OF FILE 963.py (Final Layout Fix Version) ---
 
 import streamlit as st
 import pandas as pd
@@ -51,7 +51,6 @@ SECTOR_ETFS = {
 
 @st.cache_data(ttl=60)
 def get_realtime_performance_data(etfs):
-    """(使用 Finnhub) 获取实时行情数据。"""
     if client is None: return pd.DataFrame()
     performance_data = []
     for sector, ticker in etfs.items():
@@ -65,19 +64,21 @@ def get_realtime_performance_data(etfs):
         except Exception: pass
     return pd.DataFrame(performance_data)
 
-# [新功能] 获取当日成交量
-@st.cache_data(ttl=300) # 成交量数据缓存5分钟
+@st.cache_data(ttl=300)
 def get_today_volume_yf(etfs):
-    """(使用 yfinance) 获取当日实时成交量。"""
     if not etfs: return pd.DataFrame()
     ticker_list = list(etfs.values())
     try:
-        # 只获取当天的数据
         data = yf.download(ticker_list, period="1d", progress=False)
         if data.empty: return pd.DataFrame()
         
-        # 提取成交量数据并整理
-        volume_data = data['Volume'].iloc[-1].reset_index()
+        # 兼容单/多ticker返回不同数据结构的问题
+        if len(ticker_list) == 1:
+            volume_series = data['Volume']
+        else:
+            volume_series = data['Volume'].iloc[-1]
+            
+        volume_data = volume_series.reset_index()
         volume_data.columns = ['代码', '成交量']
         return volume_data
     except Exception:
@@ -103,16 +104,13 @@ with st.spinner('正在加载实时数据...'):
 if df_performance.empty:
     st.error("无法加载实时行情数据。请检查您的 Finnhub API 密钥是否已正确配置。")
 else:
-    # --- 合并数据 ---
     if not df_volume.empty:
         df_merged = pd.merge(df_performance, df_volume, on="代码", how="left")
     else:
         df_merged = df_performance
-        df_merged['成交量'] = 0 # 如果成交量获取失败，则填充为0
-    
-    df_merged['成交量'] = df_merged['成交量'].fillna(0) # 确保没有NaN值
+        df_merged['成交量'] = 0
+    df_merged['成交量'] = df_merged['成交量'].fillna(0)
 
-    # --- 格式化图表文本 ---
     def format_volume(v):
         if v is None or pd.isna(v) or v == 0: return "N/A"
         if v > 1_000_000: return f"{v / 1_000_000:.2f}M"
@@ -124,7 +122,6 @@ else:
         axis=1
     )
 
-    # --- 实时表现概览 ---
     st.subheader(f"📊 截至 {pd.Timestamp.now(tz='Asia/Shanghai').strftime('%Y-%m-%d %H:%M:%S')} 的实时表现")
     col1, col2 = st.columns([1, 2])
     
@@ -142,15 +139,14 @@ else:
         df_sorted_for_chart = df_merged.sort_values(by="涨跌幅 (%)")
         fig_bar = px.bar(
             df_sorted_for_chart,
-            x="涨跌幅 (%)",
-            y="板块",
-            orientation='h',
-            text="chart_text",  # [核心修改] 使用我们新创建的组合文本
+            x="涨跌幅 (%)", y="板块", orientation='h', text="chart_text",
             color=df_sorted_for_chart["涨跌幅 (%)"] > 0,
             color_discrete_map={True: "green", False: "red"},
             title="各板块实时涨跌幅与成交量对比"
         )
-        # [核心修改] 更新文本模板以显示完整的自定义字符串
-        fig_bar.update_traces(texttemplate='%{text}', textposition='outside')
-        fig_bar.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig_bar, use_container_width=True)
+        fig_bar.update_traces(texttemplate='%{text}', textposition='outside', textangle=0)
+        
+        # [核心修正] 调整图表布局以防止文本被遮挡
+        fig_bar.update_layout(
+            showlegend=False,
+            ya
