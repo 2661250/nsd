@@ -1,4 +1,4 @@
-# --- START OF FILE 963.py (Final Visual Fix Version) ---
+# --- START OF FILE 963.py (Final Version with Trend Chart) ---
 
 import streamlit as st
 import pandas as pd
@@ -22,7 +22,7 @@ st.title("💰 美股行业板块表现与资金流向分析")
 st.markdown("""
 本应用结合了 **实时行情 (来自 Finnhub)** 与 **历史资金流向 (来自 Yahoo Finance)**，为您提供全面的免费分析。
 - **实时表现** 反映的是ETF相对于前一交易日收盘价的涨跌。
-- **资金流向分析** 则根据选择的时间周期，估算并对比各板块的累计净资金流入/出情况。
+- **资金流向分析** 则根据选择的时间周期，估算并对比各板块的累计净资金流入/出情况及其趋势。
 """)
 
 # ------------------ 配置和常量 (Configuration & Constants) ------------------
@@ -129,9 +129,7 @@ df_performance = get_realtime_performance_data(etfs_to_fetch)
 # ------------------ 页面展示 ------------------
 
 # --- Section 1: 实时表现概览 ---
-if df_performance.empty:
-    st.info("未能加载实时数据。可能是未配置Finnhub API密钥。资金流向分析仍可使用。")
-else:
+if not df_performance.empty:
     st.subheader(f"📊 截至 {pd.Timestamp.now(tz='Asia/Shanghai').strftime('%Y-%m-%d %H:%M:%S')} 的实时表现")
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -143,48 +141,71 @@ else:
                 st.metric(label=f"🟢 领涨: {top_performer['板块']}", value=f"{top_performer['涨跌幅 (%)']:.2f}%", delta=f"{top_performer['涨跌额']:.2f}")
                 st.metric(label=f"🔴 领跌: {bottom_performer['板块']}", value=f"{bottom_performer['涨跌幅 (%)']:.2f}%", delta=f"{bottom_performer['涨跌额']:.2f}")
         except (IndexError, KeyError):
-            st.warning("实时数据不足，无法显示领涨/领跌板块。")
-
+            pass
     with col2:
-        # [核心修正] 先排序，再将排好序的DataFrame用于绘图和颜色计算
         df_sorted_for_chart = df_performance.sort_values(by="涨跌幅 (%)")
-        
         fig_bar = px.bar(
-            df_sorted_for_chart,  # 使用排好序的数据
-            x="涨跌幅 (%)", y="板块", orientation='h', text="涨跌幅 (%)",
-            color=df_sorted_for_chart["涨跌幅 (%)"] > 0,  # 使用同一份排好序的数据来决定颜色
-            color_discrete_map={True: "green", False: "red"},
+            df_sorted_for_chart, x="涨跌幅 (%)", y="板块", orientation='h', text="涨跌幅 (%)",
+            color=df_sorted_for_chart["涨跌幅 (%)"] > 0, color_discrete_map={True: "green", False: "red"},
             title="各板块实时涨跌幅对比"
         )
         fig_bar.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
         fig_bar.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_bar, use_container_width=True)
-
-st.divider()
+    st.divider()
 
 # --- Section 2: 板块资金流向横向对比 ---
 st.subheader("🌊 板块资金流向对比 (数据源: Yahoo Finance)")
-
 time_period = st.radio(
-    "选择时间周期",
-    options=[7, 30, 90, 180, 360],
-    format_func=lambda x: f"{x} 天",
-    horizontal=True,
+    "选择时间周期", options=[7, 30, 90, 180, 360],
+    format_func=lambda x: f"{x} 天", horizontal=True,
 )
 
-with st.spinner('正在从 Yahoo Finance 加载历史数据并计算资金流...'):
+with st.spinner('正在加载历史数据并计算资金流...'):
     df_history_raw = get_all_sectors_historical_data_yf(etfs_to_fetch)
     
     if not df_history_raw.empty:
         df_history_flow = calculate_money_flow(df_history_raw)
         start_date = pd.to_datetime(datetime.now().date() - timedelta(days=time_period))
-        df_filtered = df_history_flow[pd.to_datetime(df_history_flow['date']) >= start_date]
+        df_filtered = df_history_flow[pd.to_datetime(df_history_flow['date']) >= start_date].copy()
         
         if not df_filtered.empty and 'money_flow_volume' in df_filtered.columns:
+            # --- 图表1：累计净流量条形图 (Snapshot) ---
+            st.write(f"**过去 {time_period} 天累计净资金流量**")
             flow_summary = df_filtered.groupby('板块')['money_flow_volume'].sum().sort_values()
-            
             def format_currency(value):
                 if pd.isna(value): return "$0.00K"
                 if abs(value) >= 1_000_000_000: return f"${value / 1_000_000_000:.2f}B"
                 elif abs(value) >= 1_000_000: return f"${value / 1_000_000:.2f}M"
-                else: retu
+                else: return f"${value / 1_000:.2f}K"
+            flow_summary_formatted = flow_summary.apply(format_currency)
+            fig_flow = go.Figure(go.Bar(
+                y=flow_summary.index, x=flow_summary.values, text=flow_summary_formatted,
+                orientation='h', marker_color=['green' if v > 0 else 'red' for v in flow_summary.values]
+            ))
+            fig_flow.update_layout(showlegend=False, height=500)
+            st.plotly_chart(fig_flow, use_container_width=True)
+
+            # --- [新功能] 图表2：每日累计流量趋势图 (Trend) ---
+            st.write(f"**过去 {time_period} 天资金流向趋势**")
+            df_filtered['cumulative_flow'] = df_filtered.groupby('板块')['money_flow_volume'].cumsum()
+            fig_trend = px.line(
+                df_filtered,
+                x='date',
+                y='cumulative_flow',
+                color='板块',
+                title="每日累计资金流趋势对比"
+            )
+            fig_trend.update_layout(yaxis_title="累计资金流量 (美元)", xaxis_title="日期")
+            st.plotly_chart(fig_trend, use_container_width=True)
+
+            st.info("""
+            **如何解读图表?**
+            - **条形图** 显示了在整个时间周期内，每个板块的 **最终净流入/出** 情况的快照。
+            - **折线图** 则展示了资金 **每日累积的过程**。线条持续向上，代表资金稳定流入；线条持续向下，则代表资金稳定流出。
+            """)
+        else:
+            st.warning("在所选时间范围内无数据可供计算。")
+    else:
+        if selected_sectors:
+            st.error("无法加载历史数据，资金流向分析功能不可用。")
