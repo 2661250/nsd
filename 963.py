@@ -1,4 +1,4 @@
-# --- START OF FILE 963.py (Final Upgraded Version) ---
+# --- 这是包含了所有新功能的最终正确版本 ---
 
 import streamlit as st
 import pandas as pd
@@ -100,19 +100,16 @@ def calculate_money_flow(df):
     df_copy['money_flow_volume'] = df_copy['flow_direction'] * df_copy['typical_price'] * df_copy['v']
     return df_copy
 
-# [新功能] 获取ETF市值
 @st.cache_data(ttl=86400) # 市值一天更新一次即可
 def get_etf_market_caps(etfs):
     caps = {}
     for sector, ticker_code in etfs.items():
         try:
             ticker_obj = yf.Ticker(ticker_code)
-            # 市值 = 总资产 * 最新价格 (ETF的市值通常这样计算)
             market_cap = ticker_obj.info.get('totalAssets', 0)
             if market_cap > 0:
                 caps[sector] = market_cap
-        except Exception:
-            pass # 如果获取失败则跳过
+        except Exception: pass
     return caps
 
 # ------------------ 侧边栏和用户输入 ------------------
@@ -166,7 +163,7 @@ with st.spinner('正在加载历史数据、市值并计算所有指标...'):
         df_filtered = df_history_flow[pd.to_datetime(df_history_flow['date']) >= start_date].copy()
         
         if not df_filtered.empty and 'money_flow_volume' in df_filtered.columns:
-            # --- [新功能] 1. 计算所有稳定性指标 ---
+            # 1. 计算所有稳定性指标
             summary_agg = {
                 '累计净流量': ('money_flow_volume', 'sum'),
                 '日均流量': ('money_flow_volume', 'mean'),
@@ -176,35 +173,28 @@ with st.spinner('正在加载历史数据、市值并计算所有指标...'):
             }
             df_summary = df_filtered.groupby('板块').agg(**summary_agg).reset_index()
 
-            # --- [新功能] 2. 计算资金流强度 ---
+            # 2. 计算资金流强度
             df_summary['市值'] = df_summary['板块'].map(market_caps)
-            # 防止除以0的错误
             df_summary['市值'].replace(0, np.nan, inplace=True)
             df_summary['资金流强度(%)'] = (df_summary['累计净流量'] / df_summary['市值']) * 100
             
-            # --- 3. 创建选项卡 ---
+            # 3. 创建选项卡
             tab1, tab2, tab3, tab4 = st.tabs(["📊 数据总览", " L 累计流量对比", "💪 流量强度对比", "📈 趋势分析"])
 
-            with tab1: # 数据总览 (稳定性表格)
+            with tab1:
                 st.write(f"**过去 {time_period} 天资金流向稳定性概览**")
-                # 格式化函数
                 def format_currency_flow(value):
                     if pd.isna(value): return "N/A"
                     if abs(value) >= 1_000_000_000: return f"${value / 1_000_000_000:.2f}B"
                     elif abs(value) >= 1_000_000: return f"${value / 1_000_000:.2f}M"
                     else: return f"${value / 1_000:.2f}K"
-                
-                # 准备展示用的DataFrame
                 df_display = df_summary.sort_values(by='资金流强度(%)', ascending=False).set_index('板块')
                 st.dataframe(df_display.style.format({
-                    '累计净流量': format_currency_flow,
-                    '日均流量': format_currency_flow,
-                    '流量波动': format_currency_flow,
-                    '市值': "{:,.0f}",
-                    '资金流强度(%)': "{:,.2f}%"
+                    '累计净流量': format_currency_flow, '日均流量': format_currency_flow,
+                    '流量波动': format_currency_flow, '市值': "{:,.0f}", '资金流强度(%)': "{:,.2f}%"
                 }).background_gradient(cmap='RdYlGn', subset=['资金流强度(%)']), use_container_width=True)
 
-            with tab2: # 累计流量对比 (条形图)
+            with tab2:
                 df_sorted_total = df_summary.sort_values(by='累计净流量')
                 fig_total_flow = go.Figure(go.Bar(
                     y=df_sorted_total['板块'], x=df_sorted_total['累计净流量'],
@@ -214,7 +204,7 @@ with st.spinner('正在加载历史数据、市值并计算所有指标...'):
                 fig_total_flow.update_layout(title_text=f"过去 {time_period} 天累计净资金流量", showlegend=False)
                 st.plotly_chart(fig_total_flow, use_container_width=True)
 
-            with tab3: # 流量强度对比 (条形图)
+            with tab3:
                 df_sorted_strength = df_summary.dropna(subset=['资金流强度(%)']).sort_values(by='资金流强度(%)')
                 fig_strength_flow = go.Figure(go.Bar(
                     y=df_sorted_strength['板块'], x=df_sorted_strength['资金流强度(%)'],
@@ -224,19 +214,13 @@ with st.spinner('正在加载历史数据、市值并计算所有指标...'):
                 fig_strength_flow.update_layout(title_text=f"过去 {time_period} 天资金流强度 (占总市值%)", xaxis_ticksuffix='%', showlegend=False)
                 st.plotly_chart(fig_strength_flow, use_container_width=True)
 
-            with tab4: # 趋势分析 (折线图)
+            with tab4:
                 df_filtered['cumulative_flow'] = df_filtered.groupby('板块')['money_flow_volume'].cumsum()
                 fig_trend = px.line(df_filtered, x='date', y='cumulative_flow', color='板块', title="每日累计资金流趋势对比")
                 fig_trend.update_layout(yaxis_title="累计资金流量 (美元)", xaxis_title="日期")
                 st.plotly_chart(fig_trend, use_container_width=True)
             
-            st.info("""
-            **如何解读各项指标?**
-            - **数据总览**: 综合展示了资金流的各项核心指标，**资金流强度** 是关键，它反映了资金变动相对于板块规模的显著性。
-            - **累计流量对比**: 直观展示了各板块资金流入/出的 **绝对规模**。
-            - **流量强度对比**: 揭示了哪些板块正在经历最 **剧烈** 的资金变动，即使其绝对规模不大。
-            - **趋势分析**: 可视化了资金 **持续流入/出** 的过程，帮助判断趋势的稳定性。
-            """)
+            st.info("资金流强度 = 累计净流量 / 板块ETF总市值。它反映了资金变动相对于板块规模的显著性，是衡量资金冲击力的关键指标。")
         else:
             st.warning("在所选时间范围内无数据可供计算。")
     else:
