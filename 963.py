@@ -1,15 +1,15 @@
-# --- START OF FILE 963.py (Final Title Update Version) ---
+# --- START OF FILE 963.py (Final Chart Inside Text Version) ---
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go # 导入 graph_objects 以便更精细地控制图表
 import finnhub
 import yfinance as yf
 import time
 from datetime import datetime
 
 # ------------------ 页面配置 (Page Configuration) ------------------
-# [核心修改] 更新浏览器标签页的标题
 st.set_page_config(
     page_title="S&P 500 行业板块实时表现",
     page_icon="📈",
@@ -17,7 +17,6 @@ st.set_page_config(
 )
 
 # ------------------ 应用标题和说明 (App Title & Description) ------------------
-# [核心修改] 更新应用的主标题
 st.title("📈 S&P 500 行业板块实时表现")
 st.markdown("""
 本应用结合 **实时行情 (来自 Finnhub)** 与 **实时成交量 (来自 Yahoo Finance)**，为您提供简洁高效的板块表现监控。
@@ -119,7 +118,7 @@ else:
         return str(int(v))
         
     df_merged['chart_text'] = df_merged.apply(
-        lambda row: f"{row['涨跌幅 (%)']:.2f}% (成交量: {format_volume(row['成交量'])})",
+        lambda row: f" {row['涨跌幅 (%)']:.2f}% (成交量: {format_volume(row['成交量'])}) " if row['涨跌幅 (%)'] >= 0 else f" {row['涨跌幅 (%)']:.2f}% (成交量: {format_volume(row['成交量'])}) ",
         axis=1
     )
 
@@ -138,20 +137,35 @@ else:
 
     with col2:
         df_sorted_for_chart = df_merged.sort_values(by="涨跌幅 (%)")
-        fig_bar = px.bar(
-            df_sorted_for_chart,
-            x="涨跌幅 (%)", y="板块", orientation='h', text="chart_text",
-            color=df_sorted_for_chart["涨跌幅 (%)"] > 0,
-            color_discrete_map={True: "green", False: "red"},
-            title="各板块实时涨跌幅与成交量对比"
-        )
-        fig_bar.update_traces(texttemplate='%{text}', textposition='outside', textangle=0)
+
+        # [核心修改] 使用更强大的 go.Figure() 来创建图表，以实现更精细的控制
+        fig_bar = go.Figure()
+
+        # 分别为上涨和下跌的板块添加条形
+        for index, row in df_sorted_for_chart.iterrows():
+            is_positive = row['涨跌幅 (%)'] >= 0
+            color = 'green' if is_positive else 'red'
+            
+            fig_bar.add_trace(go.Bar(
+                y=[row['板块']],
+                x=[row['涨跌幅 (%)']],
+                name=row['板块'],
+                orientation='h',
+                marker_color=color,
+                text=row['chart_text'],
+                textposition='inside', # 文本位置在条形内部
+                textfont=dict(color='white'),
+                insidetextanchor='end' if is_positive else 'start' # 上涨时文本靠右，下跌时文本靠左
+            ))
         
+        # [核心修改] 更新图表布局
         fig_bar.update_layout(
+            title_text="各板块实时涨跌幅与成交量对比",
             showlegend=False,
+            barmode='stack', # 确保条形图正确堆叠（虽然这里只有一个）
             yaxis={'categoryorder':'total ascending'},
-            margin=dict(l=200, r=50, t=80, b=50),
-            uniformtext_minsize=8,
-            uniformtext_mode='hide'
+            xaxis_title="涨跌幅 (%)",
+            yaxis_title="板块",
+            margin=dict(l=150, r=20, t=80, b=50) # 优化边距
         )
         st.plotly_chart(fig_bar, use_container_width=True)
