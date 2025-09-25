@@ -1,4 +1,4 @@
-# --- START OF FILE 963.py (Final Syntax Fix Version) ---
+# --- START OF FILE 963.py (Final Title Update Version) ---
 
 import streamlit as st
 import pandas as pd
@@ -9,14 +9,16 @@ import time
 from datetime import datetime
 
 # ------------------ 页面配置 (Page Configuration) ------------------
+# [核心修改] 更新浏览器标签页的标题
 st.set_page_config(
-    page_title="美股行业板块实时表现",
+    page_title="S&P 500 行业板块实时表现",
     page_icon="📈",
     layout="wide"
 )
 
 # ------------------ 应用标题和说明 (App Title & Description) ------------------
-st.title("📈 美股行业板块实时表现")
+# [核心修改] 更新应用的主标题
+st.title("📈 S&P 500 行业板块实时表现")
 st.markdown("""
 本应用结合 **实时行情 (来自 Finnhub)** 与 **实时成交量 (来自 Yahoo Finance)**，为您提供简洁高效的板块表现监控。
 - **数据** 反映的是ETF相对于 **前一交易日收盘价** 的实时涨跌情况。
@@ -145,11 +147,10 @@ else:
         )
         fig_bar.update_traces(texttemplate='%{text}', textposition='outside', textangle=0)
         
-        # [核心修正] 补上了缺失的右括号
         fig_bar.update_layout(
             showlegend=False,
             yaxis={'categoryorder':'total ascending'},
-            margin=dict(l=200, r=50, t=80, b=50), # 增加左边距(l)
+            margin=dict(l=200, r=50, t=80, b=50),
             uniformtext_minsize=8,
             uniformtext_mode='hide'
         )
