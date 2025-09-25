@@ -1,4 +1,4 @@
-# --- START OF FILE 963.py (Final Layout Fix Version) ---
+# --- START OF FILE 963.py (Final Syntax Fix Version) ---
 
 import streamlit as st
 import pandas as pd
@@ -72,11 +72,10 @@ def get_today_volume_yf(etfs):
         data = yf.download(ticker_list, period="1d", progress=False)
         if data.empty: return pd.DataFrame()
         
-        # 兼容单/多ticker返回不同数据结构的问题
         if len(ticker_list) == 1:
             volume_series = data['Volume']
         else:
-            volume_series = data['Volume'].iloc[-1]
+            volume_series = data['Volume'].iloc[-1] if not data['Volume'].empty else data['Volume']
             
         volume_data = volume_series.reset_index()
         volume_data.columns = ['代码', '成交量']
@@ -146,7 +145,12 @@ else:
         )
         fig_bar.update_traces(texttemplate='%{text}', textposition='outside', textangle=0)
         
-        # [核心修正] 调整图表布局以防止文本被遮挡
+        # [核心修正] 补上了缺失的右括号
         fig_bar.update_layout(
             showlegend=False,
-            ya
+            yaxis={'categoryorder':'total ascending'},
+            margin=dict(l=200, r=50, t=80, b=50), # 增加左边距(l)
+            uniformtext_minsize=8,
+            uniformtext_mode='hide'
+        )
+        st.plotly_chart(fig_bar, use_container_width=True)
