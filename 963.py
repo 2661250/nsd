@@ -1,4 +1,4 @@
-# --- START OF FILE 963.py (Final Version with Trend Chart) ---
+# --- START OF FILE 963.py (Final Upgraded Version) ---
 
 import streamlit as st
 import pandas as pd
@@ -13,21 +13,21 @@ from datetime import datetime, timedelta
 # ------------------ 页面配置 (Page Configuration) ------------------
 st.set_page_config(
     page_title="美股行业板块表现分析",
-    page_icon="💰",
+    page_icon="🚀",
     layout="wide"
 )
 
 # ------------------ 应用标题和说明 (App Title & Description) ------------------
-st.title("💰 美股行业板块表现与资金流向分析")
+st.title("🚀 美股行业板块表现与资金流向分析")
 st.markdown("""
 本应用结合了 **实时行情 (来自 Finnhub)** 与 **历史资金流向 (来自 Yahoo Finance)**，为您提供全面的免费分析。
 - **实时表现** 反映的是ETF相对于前一交易日收盘价的涨跌。
-- **资金流向分析** 则根据选择的时间周期，估算并对比各板块的累计净资金流入/出情况及其趋势。
+- **资金流向分析** 则从 **强度、趋势、稳定性** 等多个维度，深度剖析各板块的资金动态。
 """)
 
 # ------------------ 配置和常量 (Configuration & Constants) ------------------
 
-# --- API密钥配置 (仅用于Finnhub实时数据) ---
+# --- API密钥配置 ---
 try:
     API_KEY = st.secrets["FINNHUB_API_KEY"]
     client = finnhub.Client(api_key=API_KEY)
@@ -64,8 +64,7 @@ def get_realtime_performance_data(etfs):
                     "涨跌额": quote.get('d', 0), "涨跌幅 (%)": quote.get('dp', 0),
                     "昨日收盘": quote.get('pc', 0)
                 })
-        except Exception:
-            pass
+        except Exception: pass
     return pd.DataFrame(performance_data)
 
 @st.cache_data(ttl=3600)
@@ -76,23 +75,16 @@ def get_all_sectors_historical_data_yf(etfs, days_back=366):
     start_date = end_date - timedelta(days=days_back)
     for sector, ticker in etfs.items():
         try:
-            df = yf.download(
-                ticker, start=start_date, end=end_date,
-                progress=False, auto_adjust=False, back_adjust=False
-            )
+            df = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=False, back_adjust=False)
             if not df.empty:
                 df.reset_index(inplace=True)
-                df.rename(columns={
-                    'Date': 'date', 'Open': 'o', 'High': 'h',
-                    'Low': 'l', 'Close': 'c', 'Volume': 'v'
-                }, inplace=True)
+                df.rename(columns={'Date': 'date', 'Open': 'o', 'High': 'h', 'Low': 'l', 'Close': 'c', 'Volume': 'v'}, inplace=True)
                 df['代码'] = ticker
                 df['板块'] = sector
                 required_cols = ['date', 'h', 'l', 'c', 'v', '代码', '板块']
                 df_clean = df[required_cols]
                 all_clean_dfs.append(df_clean)
-        except Exception:
-            pass
+        except Exception: pass
     if not all_clean_dfs: return pd.DataFrame()
     full_df = pd.concat(all_clean_dfs, ignore_index=True)
     full_df['date'] = pd.to_datetime(full_df['date']).dt.date
@@ -108,19 +100,28 @@ def calculate_money_flow(df):
     df_copy['money_flow_volume'] = df_copy['flow_direction'] * df_copy['typical_price'] * df_copy['v']
     return df_copy
 
+# [新功能] 获取ETF市值
+@st.cache_data(ttl=86400) # 市值一天更新一次即可
+def get_etf_market_caps(etfs):
+    caps = {}
+    for sector, ticker_code in etfs.items():
+        try:
+            ticker_obj = yf.Ticker(ticker_code)
+            # 市值 = 总资产 * 最新价格 (ETF的市值通常这样计算)
+            market_cap = ticker_obj.info.get('totalAssets', 0)
+            if market_cap > 0:
+                caps[sector] = market_cap
+        except Exception:
+            pass # 如果获取失败则跳过
+    return caps
+
 # ------------------ 侧边栏和用户输入 ------------------
 with st.sidebar:
     st.header("⚙️ 参数设置")
     all_sectors = list(SECTOR_ETFS.keys())
-    selected_sectors = st.multiselect(
-        "选择要监控的板块", options=all_sectors, default=all_sectors
-    )
-    if st.checkbox("自动刷新实时数据（每分钟）"):
-        time.sleep(60)
-        st.rerun()
-    if st.button("🔄 手动刷新"):
-        st.cache_data.clear()
-        st.rerun()
+    selected_sectors = st.multiselect("选择要监控的板块", options=all_sectors, default=all_sectors)
+    if st.checkbox("自动刷新实时数据（每分钟）"): time.sleep(60); st.rerun()
+    if st.button("🔄 手动刷新"): st.cache_data.clear(); st.rerun()
 
 # ------------------ 数据获取与处理 ------------------
 etfs_to_fetch = {sector: SECTOR_ETFS[sector] for sector in selected_sectors if sector in SECTOR_ETFS}
@@ -140,29 +141,24 @@ if not df_performance.empty:
                 bottom_performer = df_sorted_perf.iloc[-1]
                 st.metric(label=f"🟢 领涨: {top_performer['板块']}", value=f"{top_performer['涨跌幅 (%)']:.2f}%", delta=f"{top_performer['涨跌额']:.2f}")
                 st.metric(label=f"🔴 领跌: {bottom_performer['板块']}", value=f"{bottom_performer['涨跌幅 (%)']:.2f}%", delta=f"{bottom_performer['涨跌额']:.2f}")
-        except (IndexError, KeyError):
-            pass
+        except (IndexError, KeyError): pass
     with col2:
         df_sorted_for_chart = df_performance.sort_values(by="涨跌幅 (%)")
-        fig_bar = px.bar(
-            df_sorted_for_chart, x="涨跌幅 (%)", y="板块", orientation='h', text="涨跌幅 (%)",
-            color=df_sorted_for_chart["涨跌幅 (%)"] > 0, color_discrete_map={True: "green", False: "red"},
-            title="各板块实时涨跌幅对比"
-        )
+        fig_bar = px.bar(df_sorted_for_chart, x="涨跌幅 (%)", y="板块", orientation='h', text="涨跌幅 (%)",
+                         color=df_sorted_for_chart["涨跌幅 (%)"] > 0, color_discrete_map={True: "green", False: "red"},
+                         title="各板块实时涨跌幅对比")
         fig_bar.update_traces(texttemplate='%{text:.2f}%', textposition='outside')
         fig_bar.update_layout(showlegend=False, yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(fig_bar, use_container_width=True)
     st.divider()
 
 # --- Section 2: 板块资金流向横向对比 ---
-st.subheader("🌊 板块资金流向对比 (数据源: Yahoo Finance)")
-time_period = st.radio(
-    "选择时间周期", options=[7, 30, 90, 180, 360],
-    format_func=lambda x: f"{x} 天", horizontal=True,
-)
+st.subheader("🌊 板块资金流向深度分析 (数据源: Yahoo Finance)")
+time_period = st.radio("选择时间周期", options=[7, 30, 90, 180, 360], format_func=lambda x: f"{x} 天", horizontal=True)
 
-with st.spinner('正在加载历史数据并计算资金流...'):
+with st.spinner('正在加载历史数据、市值并计算所有指标...'):
     df_history_raw = get_all_sectors_historical_data_yf(etfs_to_fetch)
+    market_caps = get_etf_market_caps(etfs_to_fetch)
     
     if not df_history_raw.empty:
         df_history_flow = calculate_money_flow(df_history_raw)
@@ -170,39 +166,76 @@ with st.spinner('正在加载历史数据并计算资金流...'):
         df_filtered = df_history_flow[pd.to_datetime(df_history_flow['date']) >= start_date].copy()
         
         if not df_filtered.empty and 'money_flow_volume' in df_filtered.columns:
-            # --- 图表1：累计净流量条形图 (Snapshot) ---
-            st.write(f"**过去 {time_period} 天累计净资金流量**")
-            flow_summary = df_filtered.groupby('板块')['money_flow_volume'].sum().sort_values()
-            def format_currency(value):
-                if pd.isna(value): return "$0.00K"
-                if abs(value) >= 1_000_000_000: return f"${value / 1_000_000_000:.2f}B"
-                elif abs(value) >= 1_000_000: return f"${value / 1_000_000:.2f}M"
-                else: return f"${value / 1_000:.2f}K"
-            flow_summary_formatted = flow_summary.apply(format_currency)
-            fig_flow = go.Figure(go.Bar(
-                y=flow_summary.index, x=flow_summary.values, text=flow_summary_formatted,
-                orientation='h', marker_color=['green' if v > 0 else 'red' for v in flow_summary.values]
-            ))
-            fig_flow.update_layout(showlegend=False, height=500)
-            st.plotly_chart(fig_flow, use_container_width=True)
+            # --- [新功能] 1. 计算所有稳定性指标 ---
+            summary_agg = {
+                '累计净流量': ('money_flow_volume', 'sum'),
+                '日均流量': ('money_flow_volume', 'mean'),
+                '流量波动': ('money_flow_volume', 'std'),
+                '净流入天数': ('money_flow_volume', lambda x: (x > 0).sum()),
+                '净流出天数': ('money_flow_volume', lambda x: (x < 0).sum())
+            }
+            df_summary = df_filtered.groupby('板块').agg(**summary_agg).reset_index()
 
-            # --- [新功能] 图表2：每日累计流量趋势图 (Trend) ---
-            st.write(f"**过去 {time_period} 天资金流向趋势**")
-            df_filtered['cumulative_flow'] = df_filtered.groupby('板块')['money_flow_volume'].cumsum()
-            fig_trend = px.line(
-                df_filtered,
-                x='date',
-                y='cumulative_flow',
-                color='板块',
-                title="每日累计资金流趋势对比"
-            )
-            fig_trend.update_layout(yaxis_title="累计资金流量 (美元)", xaxis_title="日期")
-            st.plotly_chart(fig_trend, use_container_width=True)
+            # --- [新功能] 2. 计算资金流强度 ---
+            df_summary['市值'] = df_summary['板块'].map(market_caps)
+            # 防止除以0的错误
+            df_summary['市值'].replace(0, np.nan, inplace=True)
+            df_summary['资金流强度(%)'] = (df_summary['累计净流量'] / df_summary['市值']) * 100
+            
+            # --- 3. 创建选项卡 ---
+            tab1, tab2, tab3, tab4 = st.tabs(["📊 数据总览", " L 累计流量对比", "💪 流量强度对比", "📈 趋势分析"])
 
+            with tab1: # 数据总览 (稳定性表格)
+                st.write(f"**过去 {time_period} 天资金流向稳定性概览**")
+                # 格式化函数
+                def format_currency_flow(value):
+                    if pd.isna(value): return "N/A"
+                    if abs(value) >= 1_000_000_000: return f"${value / 1_000_000_000:.2f}B"
+                    elif abs(value) >= 1_000_000: return f"${value / 1_000_000:.2f}M"
+                    else: return f"${value / 1_000:.2f}K"
+                
+                # 准备展示用的DataFrame
+                df_display = df_summary.sort_values(by='资金流强度(%)', ascending=False).set_index('板块')
+                st.dataframe(df_display.style.format({
+                    '累计净流量': format_currency_flow,
+                    '日均流量': format_currency_flow,
+                    '流量波动': format_currency_flow,
+                    '市值': "{:,.0f}",
+                    '资金流强度(%)': "{:,.2f}%"
+                }).background_gradient(cmap='RdYlGn', subset=['资金流强度(%)']), use_container_width=True)
+
+            with tab2: # 累计流量对比 (条形图)
+                df_sorted_total = df_summary.sort_values(by='累计净流量')
+                fig_total_flow = go.Figure(go.Bar(
+                    y=df_sorted_total['板块'], x=df_sorted_total['累计净流量'],
+                    text=df_sorted_total['累计净流量'].apply(format_currency_flow),
+                    orientation='h', marker_color=['green' if v > 0 else 'red' for v in df_sorted_total['累计净流量']]
+                ))
+                fig_total_flow.update_layout(title_text=f"过去 {time_period} 天累计净资金流量", showlegend=False)
+                st.plotly_chart(fig_total_flow, use_container_width=True)
+
+            with tab3: # 流量强度对比 (条形图)
+                df_sorted_strength = df_summary.dropna(subset=['资金流强度(%)']).sort_values(by='资金流强度(%)')
+                fig_strength_flow = go.Figure(go.Bar(
+                    y=df_sorted_strength['板块'], x=df_sorted_strength['资金流强度(%)'],
+                    text=df_sorted_strength['资金流强度(%)'].apply(lambda x: f"{x:.2f}%"),
+                    orientation='h', marker_color=['green' if v > 0 else 'red' for v in df_sorted_strength['资金流强度(%)']]
+                ))
+                fig_strength_flow.update_layout(title_text=f"过去 {time_period} 天资金流强度 (占总市值%)", xaxis_ticksuffix='%', showlegend=False)
+                st.plotly_chart(fig_strength_flow, use_container_width=True)
+
+            with tab4: # 趋势分析 (折线图)
+                df_filtered['cumulative_flow'] = df_filtered.groupby('板块')['money_flow_volume'].cumsum()
+                fig_trend = px.line(df_filtered, x='date', y='cumulative_flow', color='板块', title="每日累计资金流趋势对比")
+                fig_trend.update_layout(yaxis_title="累计资金流量 (美元)", xaxis_title="日期")
+                st.plotly_chart(fig_trend, use_container_width=True)
+            
             st.info("""
-            **如何解读图表?**
-            - **条形图** 显示了在整个时间周期内，每个板块的 **最终净流入/出** 情况的快照。
-            - **折线图** 则展示了资金 **每日累积的过程**。线条持续向上，代表资金稳定流入；线条持续向下，则代表资金稳定流出。
+            **如何解读各项指标?**
+            - **数据总览**: 综合展示了资金流的各项核心指标，**资金流强度** 是关键，它反映了资金变动相对于板块规模的显著性。
+            - **累计流量对比**: 直观展示了各板块资金流入/出的 **绝对规模**。
+            - **流量强度对比**: 揭示了哪些板块正在经历最 **剧烈** 的资金变动，即使其绝对规模不大。
+            - **趋势分析**: 可视化了资金 **持续流入/出** 的过程，帮助判断趋势的稳定性。
             """)
         else:
             st.warning("在所选时间范围内无数据可供计算。")
